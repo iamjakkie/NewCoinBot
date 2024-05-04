@@ -5,7 +5,7 @@ import lxml
 import os
 from web3 import AsyncWeb3
 
-from utils.abis import UNISWAP_PAIR
+from utils.abis import UNISWAP_PAIR, ERC20
 
 PROVIDER_LINK = os.getenv("PROVIDER_LINK")
 
@@ -27,7 +27,18 @@ async def get_paired_token(address):
         return token_1 
     return token_0
 
-async def get_token_data(address)
+async def get_token_data(address):
+    contract = web3.eth.contract(address=web3.to_checksum_address(address), abi=ERC20)
+    symbol = await contract.functions.symbol().call()
+    supply = await contract.functions.totalSupply().call()
+    return {"address": address, "symbol": symbol, "supply": int(supply)/10**18}
+
+async def get_pair_events(address):
+    
+
+async def process_token(pair_address):
+    token = await get_paired_token(pair_address["PAIR_ADDRESS"])
+    pair_address.update(await get_token_data(token))
 
 async def process_page(html):
     with open(html) as f:
@@ -36,11 +47,14 @@ async def process_page(html):
     addresses = get_contract_addresses(soup)
     # speed this up with asyncio.gather
     for i in range(0, len(addresses), 10):
-        tasks = [get_paired_token(address["PAIR_ADDRESS"]) for address in addresses[i:i+10]]
-        tokens = await asyncio.gather(*tasks)
-        for address, token in zip(addresses[i:i+10], tokens):
-            address["ADDRESS"] = token
+        tasks = [process_token(address) for address in addresses[i:i+10]]
+        await asyncio.gather(*tasks)
+        # update address with token data
+
+        # for address, token in zip(addresses[i:i+10], tokens):
+        #     address["ADDRESS"] = token
+        #     address.update(await get_token_data(token))
         break
-    print(addresses)
+    print(addresses[:10])
 
 asyncio.run(process_page(html))
