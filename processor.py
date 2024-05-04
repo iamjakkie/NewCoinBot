@@ -11,6 +11,7 @@ from utils.abis import UNISWAP_PAIR, ERC20
 from utils.payload import get_json_payload
 
 PROVIDER_LINK = os.getenv("PROVIDER_LINK")
+BASE_API_KEY = os.getenv("BASE_API_KEY")
 
 html = "./files/DEX Screener.html"
 
@@ -18,12 +19,29 @@ provider = AsyncWeb3.AsyncHTTPProvider(PROVIDER_LINK)
 web3 = AsyncWeb3(provider)
 
 LATEST_BLOCK = 0
+HEADERS = {"Accept": "application/json", "Content-Type": "application/json"}
 
 
 def get_contract_addresses(soup: BeautifulSoup):
     rows = soup.find_all("a", class_="ds-dex-table-row ds-dex-table-row-new")
     return [{"PAIR_ADDRESS": row["href"].split("/")[-1]} for row in rows]
 
+async def get_contract_creation_block(address):
+    url = "".join(f"""https://api.basescan.org/api
+        ?module=account
+        &action=txlistinternal
+        &address={address}
+        &startblock=0
+        &endblock=latest
+        &page=1
+        &offset=10
+        &sort=asc
+        &apikey={BASE_API_KEY}""".split())
+    print(url)
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            data = await response.json()
+            return int(data["result"][0]["blockNumber"])
 
 async def get_paired_token(address):
     if not address:
@@ -31,6 +49,8 @@ async def get_paired_token(address):
     contract = web3.eth.contract(
         address=web3.to_checksum_address(address), abi=UNISWAP_PAIR
     )
+    created_at = await get_contract_creation_block(address)
+    print(created_at)
     token_0 = await contract.functions.token0().call()
     token_1 = await contract.functions.token1().call()
     token_data = {}
@@ -38,8 +58,8 @@ async def get_paired_token(address):
         token_data = await get_token_data(token_1)
     else:
         token_data = await get_token_data(token_0)
-    # liquidity_data = await get_liquidity_events(address)
-    # print(liquidity_data)
+    liquidity_data = await get_liquidity_events(address, created_at)
+    print(liquidity_data)
     # sync_data = await get_sync_events(contract)
 
 
@@ -57,40 +77,56 @@ async def get_latest_block():
     return block["number"]
 
 
-async def get_liquidity_events(address):
-    # rewrite using jsonrpc
-    payload = get_json_payload(
-        "eth_getLogs",
-        fromBlock=LATEST_BLOCK,
-        toBlock="latest",
-        address=address,
-        topics=["0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496", "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"],
-    )
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "eth_getLogs",
-        "params": [
-            {
-                "fromBlock": "0xd5eb21",
-                "toBlock": "latest",
-                "address": address,
-                "topics": [
-                    "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496"
-                ],
-            }
-        ],
-    }
+async def get_liquidity_events(address, created_at):
+    global LATEST_BLOCK
+    current_block = created_at
+    liquidity_events = []
+    while current_block < LATEST_BLOCK:
+        payload = get_json_payload(
+            "eth_getLogs",
+            fromBlock=hex(current_block),
+            toBlock=hex(current_block + 500),
+            address=address,
+            topics=[["0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496", "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"]],
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
+                json=payload,
+                headers=HEADERS,
+            ) as response:
+                data = await response.json()
+        if data:
+            res = data["result"]
+            for event in res:
+                #"0x0000000000000000000000000000000000000000000000000e3a2e32d4cae5010000000000000000000000000000000000000009dc85af359ea417c37727aa0c" translates to amount0 : 1025182661033518337 amount1 : 781301779326326925118560250380, code this logic
+                amounts = event["data"]
+                amount_0 = int(amounts[:66], 16)/10**18
+                amount_1 = int(amounts[66:], 16)/10**18
+                normalised_event = {
+                    "blockNumber": int(event["blockNumber"], 16),
+                    "transactionHash": event["transactionHash"],
+                    "action": "add" if event["topics"][0] == "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f" else "remove",
+                    "base": amount_0,
+                    "quote": amount_1
+                }
+                liquidity_events.append(normalised_event)
+        current_block += 500
+    return liquidity_events
+    # week_ago = hex(LATEST_BLOCK - 604800)
+    # payload = get_json_payload(
+    #     "eth_getLogs",
+    #     fromBlock=week_ago,
+    #     toBlock="latest",
+    #     address=address,
+    #     topics=["0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496", "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"],
+    # )
 
-    print(payload)
-    print(PROVIDER_LINK)
-
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
     async with aiohttp.ClientSession() as session:
         async with session.post(
             "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
             json=payload,
-            headers=headers,
+            headers=HEADERS,
         ) as response:
             data = await response.json()
             return data
@@ -109,6 +145,8 @@ async def process_token(pair_address):
 
 async def process_page(html):
     synced_block_ts = time.time()
+    global LATEST_BLOCK
+    print("LATEST BLOCK", LATEST_BLOCK)
     LATEST_BLOCK = await get_latest_block()
     print(LATEST_BLOCK)
     with open(html) as f:
