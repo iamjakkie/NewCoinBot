@@ -58,8 +58,10 @@ async def get_paired_token(address):
         token_data = await get_token_data(token_1)
     else:
         token_data = await get_token_data(token_0)
-    liquidity_data = await get_liquidity_events(address, created_at)
-    print(liquidity_data)
+    # liquidity_data = await get_liquidity_events(address, created_at)
+    sync_data = await get_sync_events(address, created_at)
+    print(sync_data[0])
+    print(sync_data[-2])
     # sync_data = await get_sync_events(contract)
 
 
@@ -76,11 +78,47 @@ async def get_latest_block():
     block = await web3.eth.get_block("latest")
     return block["number"]
 
+async def get_sync_events(address, created_at):
+    global LATEST_BLOCK
+    current_block = created_at
+    events = []
+    while current_block < LATEST_BLOCK:
+        payload = get_json_payload(
+            "eth_getLogs",
+            fromBlock=hex(current_block),
+            toBlock=hex(current_block + 500),
+            address=address,
+            topics=["0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"],
+        )
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
+                json=payload,
+                headers=HEADERS,
+            ) as response:
+                data = await response.json()
+
+        if data:
+            res = data["result"]
+            for event in res:
+                amounts = event["data"]
+                amount_0 = int(amounts[:66], 16)/10**18
+                amount_1 = int(amounts[66:], 16)/10**18
+                normalised_event = {
+                    "blockNumber": int(event["blockNumber"], 16),
+                    "transactionHash": event["transactionHash"],
+                    "action": "trade",
+                    "base": amount_0,
+                    "quote": amount_1
+                }
+                events.append(normalised_event)
+        current_block += 500
+    return events
 
 async def get_liquidity_events(address, created_at):
     global LATEST_BLOCK
     current_block = created_at
-    liquidity_events = []
+    events = []
     while current_block < LATEST_BLOCK:
         payload = get_json_payload(
             "eth_getLogs",
@@ -110,27 +148,9 @@ async def get_liquidity_events(address, created_at):
                     "base": amount_0,
                     "quote": amount_1
                 }
-                liquidity_events.append(normalised_event)
+                events.append(normalised_event)
         current_block += 500
-    return liquidity_events
-    # week_ago = hex(LATEST_BLOCK - 604800)
-    # payload = get_json_payload(
-    #     "eth_getLogs",
-    #     fromBlock=week_ago,
-    #     toBlock="latest",
-    #     address=address,
-    #     topics=["0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496", "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"],
-    # )
-
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
-            json=payload,
-            headers=HEADERS,
-        ) as response:
-            data = await response.json()
-            return data
-
+    return events
 
 async def get_pair_events(contract):
     # get sync and liquidity events
