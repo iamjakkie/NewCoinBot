@@ -2,11 +2,14 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 import lxml
+import os
 from web3 import Web3
+
+PROVIDER_LINK = os.getenv("PROVIDER_LINK")
 
 html = "./files/DEX Screener.html"
 
-provider = Web3.AsyncHTTPProvider("https://site1.moralis-nodes.com/base/5d1a4e988b7e4ada922186a6439843f5")
+provider = Web3.AsyncHTTPProvider(PROVIDER_LINK)
 
 def get_contract_addresses(soup:BeautifulSoup):
     rows = soup.find_all('a', class_='ds-dex-table-row ds-dex-table-row-new')
