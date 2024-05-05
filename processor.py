@@ -50,7 +50,6 @@ async def get_paired_token(address):
         address=web3.to_checksum_address(address), abi=UNISWAP_PAIR
     )
     created_at = await get_contract_creation_block(address)
-    print(created_at)
     token_0 = await contract.functions.token0().call()
     token_1 = await contract.functions.token1().call()
     token_data = {}
@@ -58,10 +57,15 @@ async def get_paired_token(address):
         token_data = await get_token_data(token_1)
     else:
         token_data = await get_token_data(token_0)
-    # liquidity_data = await get_liquidity_events(address, created_at)
+    liquidity_data = await get_liquidity_events(address, created_at)
     sync_data = await get_sync_events(address, created_at)
-    print(sync_data[0])
-    print(sync_data[-2])
+    all_data = liquidity_data + sync_data
+    all_data.sort(key=lambda x: x["blockNumber"])
+    df = pd.DataFrame(all_data)
+    df["address"] = address
+    df["token"] = token_data["symbol"]
+    df["supply"] = token_data["supply"]
+    df.to_csv(f"{address}.csv")
     # sync_data = await get_sync_events(contract)
 
 
@@ -163,13 +167,13 @@ async def save_to_db(data):
 async def save_to_redis(pair_address):
     ...
 
-async def check_pair(pair_address):
+async def is_processed(pair_address):
     # check if pair exists in redis
-    ...
+    return False
 
 async def process_token(pair_address):
     # check if this pair was not processed before
-    if await check_pair(pair_address):
+    if await is_processed(pair_address):
         return
     token = await get_paired_token(pair_address["PAIR_ADDRESS"])
     if token:
@@ -185,8 +189,8 @@ async def process_page(html):
     soup = BeautifulSoup(html, "lxml")
     addresses = get_contract_addresses(soup)
     # speed this up with asyncio.gather
-    for i in range(0, len(addresses), 2):
-        tasks = [process_token(address) for address in addresses[i : i + 2]]
+    for i in range(0, len(addresses), 4):
+        tasks = [process_token(address) for address in addresses[i : i + 4]]
         await asyncio.gather(*tasks)
         # update address with token data
 
