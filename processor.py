@@ -160,11 +160,17 @@ async def save_to_db(data):
     # save to sqlite
     ...
 
+async def save_to_redis(pair_address):
+    ...
+
 async def check_pair(pair_address):
-    # check if pair exists
+    # check if pair exists in redis
     ...
 
 async def process_token(pair_address):
+    # check if this pair was not processed before
+    if await check_pair(pair_address):
+        return
     token = await get_paired_token(pair_address["PAIR_ADDRESS"])
     if token:
         pair_address.update(await get_token_data(token))
@@ -173,9 +179,7 @@ async def process_token(pair_address):
 async def process_page(html):
     synced_block_ts = time.time()
     global LATEST_BLOCK
-    print("LATEST BLOCK", LATEST_BLOCK)
     LATEST_BLOCK = await get_latest_block()
-    print(LATEST_BLOCK)
     with open(html) as f:
         html = f.read()
     soup = BeautifulSoup(html, "lxml")
