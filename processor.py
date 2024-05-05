@@ -156,6 +156,13 @@ async def get_pair_events(contract):
     # get sync and liquidity events
     ...
 
+async def save_to_db(data):
+    # save to sqlite
+    ...
+
+async def check_pair(pair_address):
+    # check if pair exists
+    ...
 
 async def process_token(pair_address):
     token = await get_paired_token(pair_address["PAIR_ADDRESS"])
