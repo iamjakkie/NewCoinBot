@@ -65,7 +65,7 @@ async def get_paired_token(address):
     df["address"] = address
     df["token"] = token_data["symbol"]
     df["supply"] = token_data["supply"]
-    df.to_csv(f"{address}.csv")
+    df.to_csv(f"out/{address}.csv")
     # sync_data = await get_sync_events(contract)
 
 
