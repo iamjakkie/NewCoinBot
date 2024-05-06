@@ -2,7 +2,9 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 import lxml
+import numpy as np
 import os
+import pandas as pd
 import random
 import time
 from web3 import AsyncWeb3
@@ -26,8 +28,13 @@ def get_contract_addresses(soup: BeautifulSoup):
     rows = soup.find_all("a", class_="ds-dex-table-row ds-dex-table-row-new")
     return [{"PAIR_ADDRESS": row["href"].split("/")[-1]} for row in rows]
 
+def get_latest_contract_addresses(soup: BeautifulSoup):
+    # since the page is sorted by age, we can just get the first n until we reach a contract that was created before the last time we checked
+    ...
+
 async def get_contract_creation_block(address):
-    url = "".join(f"""https://api.basescan.org/api
+    url = "".join(
+        f"""https://api.basescan.org/api
         ?module=account
         &action=txlistinternal
         &address={address}
@@ -36,12 +43,13 @@ async def get_contract_creation_block(address):
         &page=1
         &offset=10
         &sort=asc
-        &apikey={BASE_API_KEY}""".split())
-    print(url)
+        &apikey={BASE_API_KEY}""".split()
+    )
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             data = await response.json()
             return int(data["result"][0]["blockNumber"])
+
 
 async def get_paired_token(address):
     if not address:
@@ -50,7 +58,6 @@ async def get_paired_token(address):
         address=web3.to_checksum_address(address), abi=UNISWAP_PAIR
     )
     created_at = await get_contract_creation_block(address)
-    print(created_at)
     token_0 = await contract.functions.token0().call()
     token_1 = await contract.functions.token1().call()
     token_data = {}
@@ -58,10 +65,20 @@ async def get_paired_token(address):
         token_data = await get_token_data(token_1)
     else:
         token_data = await get_token_data(token_0)
-    # liquidity_data = await get_liquidity_events(address, created_at)
+    liquidity_data = await get_liquidity_events(address, created_at)
     sync_data = await get_sync_events(address, created_at)
-    print(sync_data[0])
-    print(sync_data[-2])
+    all_data = liquidity_data + sync_data
+    all_data.sort(key=lambda x: x["blockNumber"])
+    df = pd.DataFrame(all_data)
+    df["address"] = address
+    df["token"] = token_data["symbol"]
+    df["supply"] = token_data["supply"]
+    df["price"] = np.where(
+        df["base"] < df["quote"],
+        df["base"].astype("float") / df["quote"].astype("float"),
+        df["quote"].astype("float") / df["base"].astype("float"),
+    )
+    df.to_csv(f"out/{address}.csv")
     # sync_data = await get_sync_events(contract)
 
 
@@ -78,6 +95,7 @@ async def get_latest_block():
     block = await web3.eth.get_block("latest")
     return block["number"]
 
+
 async def get_sync_events(address, created_at):
     global LATEST_BLOCK
     current_block = created_at
@@ -88,32 +106,38 @@ async def get_sync_events(address, created_at):
             fromBlock=hex(current_block),
             toBlock=hex(current_block + 500),
             address=address,
-            topics=["0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"],
+            topics=[
+                "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
+            ],
         )
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
-                json=payload,
-                headers=HEADERS,
-            ) as response:
-                data = await response.json()
+        status = 429
+        while status == 429:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
+                    json=payload,
+                    headers=HEADERS,
+                ) as response:
+                    status = response.status
+                    data = await response.json(content_type=None)
 
         if data:
             res = data["result"]
             for event in res:
                 amounts = event["data"]
-                amount_0 = int(amounts[:66], 16)/10**18
-                amount_1 = int(amounts[66:], 16)/10**18
+                amount_0 = int(amounts[:66], 16) / 10**18
+                amount_1 = int(amounts[66:], 16) / 10**18
                 normalised_event = {
                     "blockNumber": int(event["blockNumber"], 16),
                     "transactionHash": event["transactionHash"],
                     "action": "trade",
                     "base": amount_0,
-                    "quote": amount_1
+                    "quote": amount_1,
                 }
                 events.append(normalised_event)
         current_block += 500
     return events
+
 
 async def get_liquidity_events(address, created_at):
     global LATEST_BLOCK
@@ -125,51 +149,68 @@ async def get_liquidity_events(address, created_at):
             fromBlock=hex(current_block),
             toBlock=hex(current_block + 500),
             address=address,
-            topics=[["0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496", "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"]],
+            topics=[
+                [
+                    "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496",
+                    "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f",
+                ]
+            ],
         )
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
-                json=payload,
-                headers=HEADERS,
-            ) as response:
-                data = await response.json()
+        status = 429
+        while status == 429:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
+                    json=payload,
+                    headers=HEADERS,
+                ) as response:
+                    status = response.status
+                    data = await response.json(content_type=None)
         if data:
             res = data["result"]
             for event in res:
-                #"0x0000000000000000000000000000000000000000000000000e3a2e32d4cae5010000000000000000000000000000000000000009dc85af359ea417c37727aa0c" translates to amount0 : 1025182661033518337 amount1 : 781301779326326925118560250380, code this logic
+                # "0x0000000000000000000000000000000000000000000000000e3a2e32d4cae5010000000000000000000000000000000000000009dc85af359ea417c37727aa0c" translates to amount0 : 1025182661033518337 amount1 : 781301779326326925118560250380, code this logic
                 amounts = event["data"]
-                amount_0 = int(amounts[:66], 16)/10**18
-                amount_1 = int(amounts[66:], 16)/10**18
+                amount_0 = int(amounts[:66], 16) / 10**18
+                amount_1 = int(amounts[66:], 16) / 10**18
                 normalised_event = {
                     "blockNumber": int(event["blockNumber"], 16),
                     "transactionHash": event["transactionHash"],
-                    "action": "add" if event["topics"][0] == "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f" else "remove",
+                    "action": (
+                        "add"
+                        if event["topics"][0]
+                        == "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"
+                        else "remove"
+                    ),
                     "base": amount_0,
-                    "quote": amount_1
+                    "quote": amount_1,
                 }
                 events.append(normalised_event)
         current_block += 500
     return events
 
+
 async def get_pair_events(contract):
     # get sync and liquidity events
     ...
+
 
 async def save_to_db(data):
     # save to sqlite
     ...
 
-async def save_to_redis(pair_address):
-    ...
 
-async def check_pair(pair_address):
+async def save_to_redis(pair_address): ...
+
+
+async def is_processed(pair_address):
     # check if pair exists in redis
-    ...
+    return False
+
 
 async def process_token(pair_address):
     # check if this pair was not processed before
-    if await check_pair(pair_address):
+    if await is_processed(pair_address):
         return
     token = await get_paired_token(pair_address["PAIR_ADDRESS"])
     if token:
@@ -193,7 +234,6 @@ async def process_page(html):
         # for address, token in zip(addresses[i:i+10], tokens):
         #     address["ADDRESS"] = token
         #     address.update(await get_token_data(token))
-        break
     # print(addresses[:10])
 
 
