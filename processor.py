@@ -2,6 +2,7 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 import lxml
+import numpy as np
 import os
 import pandas as pd
 import random
@@ -64,6 +65,7 @@ async def get_paired_token(address):
     df["address"] = address
     df["token"] = token_data["symbol"]
     df["supply"] = token_data["supply"]
+    df["price"] = np.where(df["base"] < df["quote"], df["base"].astype('float')/df["quote"].astype('float'), df["quote"].astype('float')/df["base"].astype('float'))
     df.to_csv(f"out/{address}.csv")
     # sync_data = await get_sync_events(contract)
 
