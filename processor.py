@@ -3,6 +3,7 @@ import aiohttp
 from bs4 import BeautifulSoup
 import lxml
 import os
+import pandas as pd
 import random
 import time
 from web3 import AsyncWeb3
@@ -21,7 +22,6 @@ web3 = AsyncWeb3(provider)
 LATEST_BLOCK = 0
 HEADERS = {"Accept": "application/json", "Content-Type": "application/json"}
 
-
 def get_contract_addresses(soup: BeautifulSoup):
     rows = soup.find_all("a", class_="ds-dex-table-row ds-dex-table-row-new")
     return [{"PAIR_ADDRESS": row["href"].split("/")[-1]} for row in rows]
@@ -37,7 +37,6 @@ async def get_contract_creation_block(address):
         &offset=10
         &sort=asc
         &apikey={BASE_API_KEY}""".split())
-    print(url)
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             data = await response.json()
@@ -68,7 +67,6 @@ async def get_paired_token(address):
     df.to_csv(f"out/{address}.csv")
     # sync_data = await get_sync_events(contract)
 
-
 async def get_token_data(address):
     if not address:
         return
@@ -76,7 +74,6 @@ async def get_token_data(address):
     symbol = await contract.functions.symbol().call()
     supply = await contract.functions.totalSupply().call()
     return {"address": address, "symbol": symbol, "supply": int(supply) / 10**18}
-
 
 async def get_latest_block():
     block = await web3.eth.get_block("latest")
@@ -94,14 +91,17 @@ async def get_sync_events(address, created_at):
             address=address,
             topics=["0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"],
         )
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
-                json=payload,
-                headers=HEADERS,
-            ) as response:
-                data = await response.json()
-
+        status = 429
+        while status == 429:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
+                    json=payload,
+                    headers=HEADERS,
+                ) as response:
+                    status = response.status
+                    data = await response.json(content_type=None)
+        
         if data:
             res = data["result"]
             for event in res:
@@ -131,13 +131,16 @@ async def get_liquidity_events(address, created_at):
             address=address,
             topics=[["0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496", "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"]],
         )
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
-                json=payload,
-                headers=HEADERS,
-            ) as response:
-                data = await response.json()
+        status = 429
+        while status == 429:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.developer.coinbase.com/rpc/v1/base/wd7CKNfSnWyjmYdCaxBUCe8BUM_onk9C",
+                    json=payload,
+                    headers=HEADERS,
+                ) as response:
+                    status = response.status
+                    data = await response.json(content_type=None)
         if data:
             res = data["result"]
             for event in res:
@@ -179,7 +182,6 @@ async def process_token(pair_address):
     if token:
         pair_address.update(await get_token_data(token))
 
-
 async def process_page(html):
     synced_block_ts = time.time()
     global LATEST_BLOCK
@@ -189,16 +191,14 @@ async def process_page(html):
     soup = BeautifulSoup(html, "lxml")
     addresses = get_contract_addresses(soup)
     # speed this up with asyncio.gather
-    for i in range(0, len(addresses), 4):
-        tasks = [process_token(address) for address in addresses[i : i + 4]]
+    for i in range(0, len(addresses), 2):
+        tasks = [process_token(address) for address in addresses[i : i + 2]]
         await asyncio.gather(*tasks)
         # update address with token data
 
         # for address, token in zip(addresses[i:i+10], tokens):
         #     address["ADDRESS"] = token
         #     address.update(await get_token_data(token))
-        break
     # print(addresses[:10])
-
 
 asyncio.run(process_page(html))
