@@ -23,12 +23,15 @@ web3 = AsyncWeb3(provider)
 LATEST_BLOCK = 0
 HEADERS = {"Accept": "application/json", "Content-Type": "application/json"}
 
+
 def get_contract_addresses(soup: BeautifulSoup):
     rows = soup.find_all("a", class_="ds-dex-table-row ds-dex-table-row-new")
     return [{"PAIR_ADDRESS": row["href"].split("/")[-1]} for row in rows]
 
+
 async def get_contract_creation_block(address):
-    url = "".join(f"""https://api.basescan.org/api
+    url = "".join(
+        f"""https://api.basescan.org/api
         ?module=account
         &action=txlistinternal
         &address={address}
@@ -37,11 +40,13 @@ async def get_contract_creation_block(address):
         &page=1
         &offset=10
         &sort=asc
-        &apikey={BASE_API_KEY}""".split())
+        &apikey={BASE_API_KEY}""".split()
+    )
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             data = await response.json()
             return int(data["result"][0]["blockNumber"])
+
 
 async def get_paired_token(address):
     if not address:
@@ -65,9 +70,14 @@ async def get_paired_token(address):
     df["address"] = address
     df["token"] = token_data["symbol"]
     df["supply"] = token_data["supply"]
-    df["price"] = np.where(df["base"] < df["quote"], df["base"].astype('float')/df["quote"].astype('float'), df["quote"].astype('float')/df["base"].astype('float'))
+    df["price"] = np.where(
+        df["base"] < df["quote"],
+        df["base"].astype("float") / df["quote"].astype("float"),
+        df["quote"].astype("float") / df["base"].astype("float"),
+    )
     df.to_csv(f"out/{address}.csv")
     # sync_data = await get_sync_events(contract)
+
 
 async def get_token_data(address):
     if not address:
@@ -77,9 +87,11 @@ async def get_token_data(address):
     supply = await contract.functions.totalSupply().call()
     return {"address": address, "symbol": symbol, "supply": int(supply) / 10**18}
 
+
 async def get_latest_block():
     block = await web3.eth.get_block("latest")
     return block["number"]
+
 
 async def get_sync_events(address, created_at):
     global LATEST_BLOCK
@@ -91,7 +103,9 @@ async def get_sync_events(address, created_at):
             fromBlock=hex(current_block),
             toBlock=hex(current_block + 500),
             address=address,
-            topics=["0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"],
+            topics=[
+                "0x1c411e9a96e071241c2f21f7726b17ae89e3cab4c78be50e062b03a9fffbbad1"
+            ],
         )
         status = 429
         while status == 429:
@@ -103,23 +117,24 @@ async def get_sync_events(address, created_at):
                 ) as response:
                     status = response.status
                     data = await response.json(content_type=None)
-        
+
         if data:
             res = data["result"]
             for event in res:
                 amounts = event["data"]
-                amount_0 = int(amounts[:66], 16)/10**18
-                amount_1 = int(amounts[66:], 16)/10**18
+                amount_0 = int(amounts[:66], 16) / 10**18
+                amount_1 = int(amounts[66:], 16) / 10**18
                 normalised_event = {
                     "blockNumber": int(event["blockNumber"], 16),
                     "transactionHash": event["transactionHash"],
                     "action": "trade",
                     "base": amount_0,
-                    "quote": amount_1
+                    "quote": amount_1,
                 }
                 events.append(normalised_event)
         current_block += 500
     return events
+
 
 async def get_liquidity_events(address, created_at):
     global LATEST_BLOCK
@@ -131,7 +146,12 @@ async def get_liquidity_events(address, created_at):
             fromBlock=hex(current_block),
             toBlock=hex(current_block + 500),
             address=address,
-            topics=[["0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496", "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"]],
+            topics=[
+                [
+                    "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496",
+                    "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f",
+                ]
+            ],
         )
         status = 429
         while status == 429:
@@ -146,35 +166,44 @@ async def get_liquidity_events(address, created_at):
         if data:
             res = data["result"]
             for event in res:
-                #"0x0000000000000000000000000000000000000000000000000e3a2e32d4cae5010000000000000000000000000000000000000009dc85af359ea417c37727aa0c" translates to amount0 : 1025182661033518337 amount1 : 781301779326326925118560250380, code this logic
+                # "0x0000000000000000000000000000000000000000000000000e3a2e32d4cae5010000000000000000000000000000000000000009dc85af359ea417c37727aa0c" translates to amount0 : 1025182661033518337 amount1 : 781301779326326925118560250380, code this logic
                 amounts = event["data"]
-                amount_0 = int(amounts[:66], 16)/10**18
-                amount_1 = int(amounts[66:], 16)/10**18
+                amount_0 = int(amounts[:66], 16) / 10**18
+                amount_1 = int(amounts[66:], 16) / 10**18
                 normalised_event = {
                     "blockNumber": int(event["blockNumber"], 16),
                     "transactionHash": event["transactionHash"],
-                    "action": "add" if event["topics"][0] == "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f" else "remove",
+                    "action": (
+                        "add"
+                        if event["topics"][0]
+                        == "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"
+                        else "remove"
+                    ),
                     "base": amount_0,
-                    "quote": amount_1
+                    "quote": amount_1,
                 }
                 events.append(normalised_event)
         current_block += 500
     return events
 
+
 async def get_pair_events(contract):
     # get sync and liquidity events
     ...
+
 
 async def save_to_db(data):
     # save to sqlite
     ...
 
-async def save_to_redis(pair_address):
-    ...
+
+async def save_to_redis(pair_address): ...
+
 
 async def is_processed(pair_address):
     # check if pair exists in redis
     return False
+
 
 async def process_token(pair_address):
     # check if this pair was not processed before
@@ -183,6 +212,7 @@ async def process_token(pair_address):
     token = await get_paired_token(pair_address["PAIR_ADDRESS"])
     if token:
         pair_address.update(await get_token_data(token))
+
 
 async def process_page(html):
     synced_block_ts = time.time()
@@ -202,5 +232,6 @@ async def process_page(html):
         #     address["ADDRESS"] = token
         #     address.update(await get_token_data(token))
     # print(addresses[:10])
+
 
 asyncio.run(process_page(html))
