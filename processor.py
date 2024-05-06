@@ -28,6 +28,9 @@ def get_contract_addresses(soup: BeautifulSoup):
     rows = soup.find_all("a", class_="ds-dex-table-row ds-dex-table-row-new")
     return [{"PAIR_ADDRESS": row["href"].split("/")[-1]} for row in rows]
 
+def get_latest_contract_addresses(soup: BeautifulSoup):
+    # since the page is sorted by age, we can just get the first n until we reach a contract that was created before the last time we checked
+    ...
 
 async def get_contract_creation_block(address):
     url = "".join(

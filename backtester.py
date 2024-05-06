@@ -61,11 +61,12 @@ def main():
 
     # find optimal buy_after_block and sell_after_block
 
+    # basic test - grid search, single entry single exit -- ca. earliest entry, leave around 1000 blocks
     max_return = 0
     best_buy_after_block = 0
     best_sell_after_block = 0
-    for buy_after_block in range(20, 40):
-        for sell_after_block in range(buy_after_block, 600, 5):
+    for buy_after_block in range(20, 50):
+        for sell_after_block in range(1000, 1200, 5):
             return_ = simulate(data, total_investment, buy_after_block, sell_after_block, latest_block)
             print(f"buy_after_block: {buy_after_block}, sell_after_block: {sell_after_block}, return: {return_}")
             if return_ > max_return:
