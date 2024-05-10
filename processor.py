@@ -6,6 +6,7 @@ import numpy as np
 import os
 import pandas as pd
 import random
+import requests
 import time
 from web3 import AsyncWeb3
 
@@ -15,7 +16,9 @@ from utils.payload import get_json_payload
 PROVIDER_LINK = os.getenv("PROVIDER_LINK")
 BASE_API_KEY = os.getenv("BASE_API_KEY")
 
-html = "./files/DEX Screener.html"
+# html = "./files/DEX Screener_2.html"
+html = "https://dexscreener.com/?rankBy=pairAge&order=asc&chainIds=base"
+
 
 provider = AsyncWeb3.AsyncHTTPProvider(PROVIDER_LINK)
 web3 = AsyncWeb3(provider)
@@ -25,8 +28,9 @@ HEADERS = {"Accept": "application/json", "Content-Type": "application/json"}
 
 
 def get_contract_addresses(soup: BeautifulSoup):
-    rows = soup.find_all("a", class_="ds-dex-table-row ds-dex-table-row-new")
-    return [{"PAIR_ADDRESS": row["href"].split("/")[-1]} for row in rows]
+    rows = soup.find_all("a", class_="ds-dex-table-row ds-dex-table-row-new")[:10]
+    # return [{"PAIR_ADDRESS": row["href"].split("/")[-1]} for row in rows]
+    return [row["href"].split("/")[-1] for row in rows]
 
 def get_latest_contract_addresses(soup: BeautifulSoup):
     # since the page is sorted by age, we can just get the first n until we reach a contract that was created before the last time we checked
@@ -66,9 +70,12 @@ async def get_paired_token(address):
     else:
         token_data = await get_token_data(token_0)
     liquidity_data = await get_liquidity_events(address, created_at)
+    # backtest only
     sync_data = await get_sync_events(address, created_at)
     all_data = liquidity_data + sync_data
     all_data.sort(key=lambda x: x["blockNumber"])
+    if not all_data:
+        return (created_at, 0)
     df = pd.DataFrame(all_data)
     df["address"] = address
     df["token"] = token_data["symbol"]
@@ -78,7 +85,8 @@ async def get_paired_token(address):
         df["base"].astype("float") / df["quote"].astype("float"),
         df["quote"].astype("float") / df["base"].astype("float"),
     )
-    df.to_csv(f"out/{address}.csv")
+    df.to_csv(f"out/live/{address}.csv")
+    return (created_at, liquidity_data[0])
     # sync_data = await get_sync_events(contract)
 
 
@@ -212,23 +220,41 @@ async def process_token(pair_address):
     # check if this pair was not processed before
     if await is_processed(pair_address):
         return
-    token = await get_paired_token(pair_address["PAIR_ADDRESS"])
-    if token:
-        pair_address.update(await get_token_data(token))
+    return await get_paired_token(pair_address)
+    
+    # token = await get_paired_token(pair_address)
+    # if token:
+    #     pair_address.update(await get_token_data(token))
 
 
-async def process_page(html):
-    synced_block_ts = time.time()
+async def process_page(html, addresses:list):
+    start_ts = time.time()
     global LATEST_BLOCK
     LATEST_BLOCK = await get_latest_block()
-    with open(html) as f:
-        html = f.read()
+    delay = 0
+    # with open(html) as f:
+    #     html = f.read()
     soup = BeautifulSoup(html, "lxml")
-    addresses = get_contract_addresses(soup)
+    new_addresses = get_contract_addresses(soup)
+    # print new_addresses not in addresses
+    if not addresses:
+        addresses.extend(new_addresses)
+        return delay
+    
+    for add in new_addresses[::-1]:
+        if add not in addresses:
+            created_at, liquidity_at = await process_token(add)
+            delay = LATEST_BLOCK - created_at
+            print(f"Pair: {add}, Created at: {created_at}, Latest block: {LATEST_BLOCK}, DIFF: {delay}, Liquidity Block: {liquidity_at}")
+            addresses.append(add)
+    end_ts = time.time()
+    print(f"Time taken: {end_ts - start_ts} seconds")
+    return delay
+    # await asyncio.wait(2)
     # speed this up with asyncio.gather
-    for i in range(0, len(addresses), 2):
-        tasks = [process_token(address) for address in addresses[i : i + 2]]
-        await asyncio.gather(*tasks)
+    # for i in range(0, len(addresses), 2):
+    #     tasks = [process_token(address) for address in addresses[i : i + 2]]
+    #     await asyncio.gather(*tasks)
         # update address with token data
 
         # for address, token in zip(addresses[i:i+10], tokens):
@@ -237,4 +263,4 @@ async def process_page(html):
     # print(addresses[:10])
 
 
-asyncio.run(process_page(html))
+# asyncio.run(process_page(html))

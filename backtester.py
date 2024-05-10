@@ -14,6 +14,8 @@ def get_current_block():
     return int(res.json()["result"], 16)
 
 def get_pair_return(pair_df, buy_after_block, sell_after_block, weth, latest_block):
+    if len(pair_df) < 2:
+        return 0
     first_block = pair_df[pair_df["action"]=="add"]["blockNumber"].values[0]
     try:
         last_block = int(pair_df[pair_df["action"]=="remove"]["blockNumber"].values[0])
@@ -32,32 +34,40 @@ def get_pair_return(pair_df, buy_after_block, sell_after_block, weth, latest_blo
     # print(f"Buy price: {buy_price}, Sell price: {sell_price}, bought: {weth/buy_price}, sold: {(weth/buy_price) * sell_price}")
     return (weth/buy_price) * sell_price
 
-def simulate(data, total_investment, buy_after_block, sell_after_block, latest_block):
-    unique_tokens = data["token"].unique()
+def simulate(data, total_investment, buy_after_block, sell_after_block, latest_block, sell_safety_blocks=None):
+    unique_tokens = data["address"].unique()
     total_pairs = len(unique_tokens)
     split = total_investment / total_pairs
     returns = []
     max_return = 0
     max_token = None
     for token in unique_tokens:
-        pair_df = data[data["token"]==token]
+        pair_df = data[data["address"]==token]
         weth = split
         buy_after_block = buy_after_block
         sell_after_block = sell_after_block
-        pair_return = get_pair_return(pair_df, buy_after_block, sell_after_block, weth, latest_block)
+        if sell_safety_blocks:
+            weth = weth/2
+            pair_return_safety = get_pair_return(pair_df, buy_after_block, sell_safety_blocks, weth, latest_block)
+        else:
+            pair_return_safety = 0
+        pair_return_final = get_pair_return(pair_df, buy_after_block, sell_after_block, weth, latest_block)
+        pair_return = pair_return_safety + pair_return_final
         if pair_return > max_return:
             max_return = pair_return
             max_token = token
-        returns.append(get_pair_return(pair_df, buy_after_block, sell_after_block, weth, latest_block))
+        returns.append(pair_return)
     print(f"Max return: {max_return} for token: {max_token}")
     return sum(returns)
 
 def main():
     data = read_all_data()
     latest_block = get_current_block()
-    total_investment = 0.3 # always in weth
+    print(latest_block)
+    total_investment = 0.07 # always in weth
 
-    # print(get_pair_return(data[data["token"]=="mechelle"], 20, 270, 0.003, latest_block))
+    #print(get_pair_return(data[data["token"]=="PUPS"], 20, 270, 0.003, latest_block))
+    
 
     # find optimal buy_after_block and sell_after_block
 
@@ -65,14 +75,21 @@ def main():
     max_return = 0
     best_buy_after_block = 0
     best_sell_after_block = 0
-    for buy_after_block in range(20, 50):
-        for sell_after_block in range(1000, 1200, 5):
+    for buy_after_block in range(70, 100, 10):
+        for sell_after_block in range(500, 1100, 10):
             return_ = simulate(data, total_investment, buy_after_block, sell_after_block, latest_block)
             print(f"buy_after_block: {buy_after_block}, sell_after_block: {sell_after_block}, return: {return_}")
             if return_ > max_return:
                 max_return = return_
                 best_buy_after_block = buy_after_block
                 best_sell_after_block = sell_after_block
+            # for sell_safety_blocks in range(0, 300, 10):
+            #     return_ = simulate(data, total_investment, buy_after_block, sell_after_block, latest_block, sell_safety_blocks)
+            #     print(f"buy_after_block: {buy_after_block}, sell_after_block: {sell_after_block}, return: {return_}, safety: {sell_safety_blocks}")
+            #     if return_ > max_return:
+            #         max_return = return_
+            #         best_buy_after_block = buy_after_block
+            #         best_sell_after_block = sell_after_block
     
     print(f"Best return: {max_return}, buy_after_block: {best_buy_after_block}, sell_after_block: {best_sell_after_block}, total gain: {max_return - total_investment}")
 
