@@ -2,7 +2,12 @@ import aiohttp
 import asyncio
 import lxml
 from selenium import webdriver
+from seleniumbase import Driver
 from bs4 import BeautifulSoup
+# import ordered set
+
+
+from processor import process_page
 
 URL = "https://dexscreener.com/?rankBy=pairAge&order=asc&chainIds=base&maxAge=1"
 
@@ -26,7 +31,6 @@ URL = "https://dexscreener.com/?rankBy=pairAge&order=asc&chainIds=base&maxAge=1"
 # bs = BeautifulSoup(dr.page_source,"lxml")
 # print(bs.prettify())
 
-from seleniumbase import Driver
 
 driver = Driver(uc=True)
 driver.uc_open_with_reconnect(URL, 4)
@@ -38,12 +42,22 @@ driver.uc_open_with_reconnect(URL, 4)
 # # get href from a tag with class="ds-dex-table-row ds-dex-table-row-new"
 # href = row['href']
 # print(href)
+# global_addresses = set()
+global_addresses = []
+total_delay = 0
+adds = 0
 while True:
-    driver.sleep(3)
-    soup = BeautifulSoup(driver.get_page_source(), 'lxml')
-    rows = soup.find_all('a', class_='ds-dex-table-row ds-dex-table-row-new')
-    for row in rows:
-        href = row['href']
-        print(href)
-    print("REFRESH")
+    driver.sleep(2)
+    html = driver.get_page_source()
+
+    # soup = BeautifulSoup(driver.get_page_source(), 'lxml')
+    # rows = soup.find_all('a', class_='ds-dex-table-row ds-dex-table-row-new')
+    # for row in rows:
+    #     href = row['href']
+    #     print(href)
+    delay = asyncio.run(process_page(html, global_addresses))
+    if delay > 0:
+        total_delay += delay
+        adds += 1
+        print(f"Mean delay: {total_delay / (adds)}")
     driver.refresh()
