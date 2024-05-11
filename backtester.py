@@ -1,3 +1,4 @@
+import numpy as np
 import os
 import pandas as pd
 import requests
@@ -34,8 +35,9 @@ def get_pair_return(pair_df, buy_after_block, sell_after_block, weth, latest_blo
     # print(f"Buy price: {buy_price}, Sell price: {sell_price}, bought: {weth/buy_price}, sold: {(weth/buy_price) * sell_price}")
     return (weth/buy_price) * sell_price
 
-def simulate(data, total_investment, buy_after_block, sell_after_block, latest_block, sell_safety_blocks=None):
-    unique_tokens = data["address"].unique()
+def simulate(data, total_investment, buy_after_block, sell_after_block, latest_block, sell_safety_blocks=None, unique_tokens=None):
+    if not unique_tokens:
+        unique_tokens = data["address"].unique()
     total_pairs = len(unique_tokens)
     split = total_investment / total_pairs
     returns = []
@@ -75,14 +77,32 @@ def main():
     max_return = 0
     best_buy_after_block = 0
     best_sell_after_block = 0
-    for buy_after_block in range(70, 100, 10):
-        for sell_after_block in range(500, 1100, 10):
-            return_ = simulate(data, total_investment, buy_after_block, sell_after_block, latest_block)
-            print(f"buy_after_block: {buy_after_block}, sell_after_block: {sell_after_block}, return: {return_}")
-            if return_ > max_return:
-                max_return = return_
-                best_buy_after_block = buy_after_block
-                best_sell_after_block = sell_after_block
+    # for buy_after_block in range(70, 100, 10):
+    #     for sell_after_block in range(500, 1100, 10):
+    #         return_ = simulate(data, total_investment, buy_after_block, sell_after_block, latest_block)
+    #         print(f"buy_after_block: {buy_after_block}, sell_after_block: {sell_after_block}, return: {return_}")
+    #         if return_ > max_return:
+    #             max_return = return_
+    #             best_buy_after_block = buy_after_block
+    #             best_sell_after_block = sell_after_block
+
+    best_lp = 0.0
+    # simulate different initial LP pool sizes
+    add_per_token = data.groupby('address').first().reset_index()
+    add_per_token["weth_lp"] = np.where(add_per_token["base"] < add_per_token["quote"], add_per_token["base"], add_per_token["quote"])
+    # range 0 to 3, step 0.1
+    buy_after_block = 30
+    sell_after_block = 1060
+    for weth in [0.0, 1.0, 2.0, 3.0]:
+        tokens = add_per_token[add_per_token["weth_lp"] >= weth]["address"].tolist()
+        return_ = simulate(data, total_investment, buy_after_block, sell_after_block, latest_block, unique_tokens=tokens)
+        print(f"lp: {weth}, buy_after_block: {buy_after_block}, sell_after_block: {sell_after_block}, return: {return_}")
+        if return_ > max_return:
+            max_return = return_
+            best_lp = weth
+            best_buy_after_block = buy_after_block
+            best_sell_after_block = sell_after_block
+    print(f"Best return: {max_return}, best_lp: {best_lp}, no of tokens: {len(tokens)}, buy_after_block: {best_buy_after_block}, sell_after_block: {best_sell_after_block}, total gain: {max_return - total_investment}")
             # for sell_safety_blocks in range(0, 300, 10):
             #     return_ = simulate(data, total_investment, buy_after_block, sell_after_block, latest_block, sell_safety_blocks)
             #     print(f"buy_after_block: {buy_after_block}, sell_after_block: {sell_after_block}, return: {return_}, safety: {sell_safety_blocks}")
